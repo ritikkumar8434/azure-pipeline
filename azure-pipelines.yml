@@ -1,0 +1,17 @@
+trigger:
+- main  # This triggers the pipeline when changes are pushed to the main branch.
+
+pool:
+  vmImage: 'ubuntu-latest'  # Using the latest Ubuntu image to run commands.
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.x'
+    addToPath: true
+
+- script: |
+    echo "This is a simple test pipeline"
+    ls
+    date
+  displayName: 'Run simple commands'
