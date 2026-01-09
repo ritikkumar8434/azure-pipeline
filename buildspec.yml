@@ -1,11 +1,18 @@
 version: 0.2
 
 phases:
+  install:
+    runtime-versions:
+      php: 8.5
+    commands:
+      - echo "Installing Composer dependencies"
+      - composer install --no-dev --optimize-autoloader
+
   build:
     commands:
-      - echo "Preparing Laravel package"
-      - zip -r laravel-app.zip . -x "vendor/*" ".git/*" "node_modules/*"
+      - echo "Build phase complete"
 
 artifacts:
   files:
-    - laravel-app.zip
+    - '**/*'
+  discard-paths: no
