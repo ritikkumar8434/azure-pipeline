@@ -5,10 +5,12 @@ phases:
     runtime-versions:
       php: 8.1
     commands:
+      - echo "Installing Composer dependencies"
       - composer install --no-dev --optimize-autoloader
 
   build:
     commands:
+      - php artisan key:generate || true
       - php artisan config:clear
       - php artisan cache:clear
 
