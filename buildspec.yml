@@ -1,16 +1,11 @@
 version: 0.2
 
 phases:
-  install:
-    commands:
-      - php -v
-      - composer install --no-dev --optimize-autoloader
-
   build:
     commands:
-      - php artisan config:clear || true
-      - php artisan cache:clear || true
+      - echo "Preparing Laravel package"
+      - zip -r laravel-app.zip . -x "vendor/*" ".git/*" "node_modules/*"
 
 artifacts:
   files:
-    - '**/*'
+    - laravel-app.zip
