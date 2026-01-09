@@ -1,23 +1,13 @@
-
 version: 0.2
 
 phases:
   install:
-    runtime-versions:
-      php: 8.1
     commands:
-      - echo "BUILD SPEC IS EXECUTING"
-      - exit 1
-      - echo "Installing Composer dependencies"
       - php -v
-      - composer install --no-dev --optimize-autoloader
-
+      - composer install
   build:
     commands:
-      - php artisan key:generate || true
-      - php artisan config:clear || true
-      - php artisan cache:clear  || true
-
+      - echo "Build completed"
 artifacts:
   files:
     - '**/*'
