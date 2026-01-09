@@ -2,8 +2,6 @@ version: 0.2
 
 phases:
   install:
-    runtime-versions:
-      php: 8.5
     commands:
       - echo "Installing Composer dependencies"
       - composer install --no-dev --optimize-autoloader
