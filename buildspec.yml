@@ -1,0 +1,17 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      php: 8.1
+    commands:
+      - composer install --no-dev --optimize-autoloader
+
+  build:
+    commands:
+      - php artisan config:clear
+      - php artisan cache:clear
+
+artifacts:
+  files:
+    - '**/*'
