@@ -2,12 +2,17 @@ version: 0.2
 
 phases:
   install:
+    runtime-versions:
+      php: 8.1
     commands:
       - php -v
-      - composer install
+      - composer install --no-dev --optimize-autoloader
+
   build:
     commands:
-      - echo "Build completed"
+      - php artisan config:clear || true
+      - php artisan cache:clear || true
+
 artifacts:
   files:
     - '**/*'
