@@ -6,8 +6,8 @@ phases:
       php: 8.2
     commands:
       # Update PHP and install required extensions
-      - apt-get update -y
-      - apt-get install -y zip unzip git libzip-dev
+      - yum update -y
+      - yum install -y zip unzip git libzip-dev
       - docker-php-ext-install zip pdo pdo_mysql
       
       # Install Composer
