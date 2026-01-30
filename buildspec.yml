@@ -5,84 +5,117 @@ phases:
     runtime-versions:
       php: 8.2
     commands:
-      # Update PHP and install required extensions
-      - yum update -y
-      - yum install -y zip unzip git libzip-devel
-      - docker-php-ext-install zip pdo pdo_mysql
+      # For Amazon Linux 2023 (AL2023) - uses dnf instead of yum
+      - dnf update -y
+      - dnf install -y zip unzip git gcc-c++ make openssl-devel
+      
+      # Install PHP 8.2 and extensions
+      - dnf install -y php php-cli php-common php-devel php-mbstring php-pdo php-mysqlnd php-xml php-gd php-opcache php-zip php-bcmath php-json php-intl
       
       # Install Composer
-      - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+      - curl -sS https://getcomposer.org/installer | php
+      - mv composer.phar /usr/local/bin/composer
+      - chmod +x /usr/local/bin/composer
       
-      # Install Node.js for frontend assets (if needed)
-      #- curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-      #- apt-get install -y nodejs
+      # Install Node.js 18.x
+      - dnf install -y nodejs
+      
+      # Install jq for JSON parsing
+      - dnf install -y jq
 
   pre_build:
     commands:
-      # Check PHP and Composer versions
-      - php --version
-      - composer --version
-      - node --version
-      - npm --version
+      # Display versions
+      - echo "PHP version: $(php --version | head -1)"
+      - echo "Composer version: $(composer --version)"
+      - echo "Node version: $(node --version)"
+      - echo "NPM version: $(npm --version)"
       
-      # Set proper permissions
+      # Create Laravel required directories
+      - mkdir -p storage/framework/{cache,sessions,views}
+      - mkdir -p storage/logs
+      
+      # Set permissions
       - chmod -R 755 storage bootstrap/cache
+      - chown -R 1000:1000 storage bootstrap/cache
 
   build:
     commands:
-      # Install PHP dependencies (no dev dependencies for production)
-      - composer install --no-dev --optimize-autoloader --no-interaction
+      # Install dependencies with memory limit
+      - php -d memory_limit=-1 /usr/local/bin/composer install --no-dev --optimize-autoloader --no-interaction --no-progress
       
-      # Copy environment file if it exists in the source
-      - if [ -f .env.example ]; then cp .env.example .env; fi
+      # Handle environment configuration
+      - if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
       
-      # Generate application key
-      - php artisan key:generate
+      # Generate app key if needed
+      - if [ -f .env ] && ! grep -q '^APP_KEY=base64:' .env; then php artisan key:generate --force; fi
       
-      # Build frontend assets (if using Vite/Mix)
-      #- npm ci --only=production
-      #- npm run build
+      # Build assets if package.json exists
+      - if [ -f package.json ]; then npm ci --silent; fi
+      - if [ -f package.json ] && grep -q '"build"' package.json; then npm run build; fi
       
-      # Clear and cache config
+      # Cache configuration
       - php artisan config:cache
       - php artisan route:cache
       - php artisan view:cache
-      
-      # Run migrations in build phase (optional - or do in Elastic Beanstalk)
-      # - php artisan migrate --force
 
   post_build:
     commands:
       # Create deployment package
-      - echo "Creating deployment package..."
-      - mkdir -p deployment
+      - echo "Building Elastic Beanstalk deployment package..."
+      - BUILD_ID=$(date +%Y%m%d-%H%M%S)
       
-      # Copy necessary files (exclude development files)
-      - rsync -av --exclude='.git' \
-                --exclude='.github' \
-                --exclude='.env.example' \
-                --exclude='tests' \
-                --exclude='phpunit.xml' \
-                --exclude='storage/debugbar' \
-                --exclude='*.md' \
-                ./ deployment/
+      # Create a clean deployment directory
+      - rm -rf deploy && mkdir deploy
       
-      # Zip the deployment package
-      - cd deployment && zip -r ../laravel-deployment.zip . && cd ..
+      # Use find and cp to copy files with exclusions
+      - find . -type f -not -path "./node_modules/*" \
+               -not -path "./vendor/*" \
+               -not -path "./.git/*" \
+               -not -path "./.idea/*" \
+               -not -path "./storage/debugbar/*" \
+               -not -path "./storage/logs/*" \
+               -not -path "./storage/framework/cache/*" \
+               -not -path "./storage/framework/sessions/*" \
+               -not -path "./storage/framework/views/*" \
+               -not -name "*.md" \
+               -not -name "*.log" \
+               -not -name ".env.example" \
+               -not -name "phpunit.xml" \
+               -not -name "docker-compose.yml" \
+               -not -name "Dockerfile" | \
+        while read file; do
+          dest="deploy/$(dirname "$file")"
+          mkdir -p "$dest"
+          cp "$file" "$dest/"
+        done
       
-      # List files in the zip for verification
-      - echo "Files in deployment package:"
-      - unzip -l laravel-deployment.zip | tail -20
+      # Ensure vendor and node_modules are copied
+      - cp -r vendor deploy/ 2>/dev/null || true
+      - cp -r node_modules deploy/ 2>/dev/null || true
       
-      # Create the final artifact
-      - mv laravel-deployment.zip laravel-$(date +%Y%m%d-%H%M%S).zip
+      # Copy .ebextensions and .platform directories
+      - [ -d .ebextensions ] && cp -r .ebextensions deploy/
+      - [ -d .platform ] && cp -r .platform deploy/
+      
+      # Create a simple .ebignore
+      - echo -e "node_modules/\nvendor/\n.git/\nstorage/debugbar/\n*.log" > deploy/.ebignore
+      
+      # Create the zip file
+      - cd deploy && zip -qr "../laravel-deploy-${BUILD_ID}.zip" . && cd ..
+      
+      # Output artifact info
+      - echo "Artifact: laravel-deploy-${BUILD_ID}.zip"
+      - ls -lh "laravel-deploy-${BUILD_ID}.zip"
 
 artifacts:
   files:
-    - 'laravel-*.zip'
+    - 'laravel-deploy-*.zip'
+  name: laravel-deploy
   discard-paths: yes
 
 cache:
   paths:
+    - '/root/.composer/cache/**/*'
     - 'vendor/**/*'
     - 'node_modules/**/*'
