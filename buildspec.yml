@@ -1,0 +1,88 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      php: 8.2
+    commands:
+      # Update PHP and install required extensions
+      - apt-get update -y
+      - apt-get install -y zip unzip git libzip-dev
+      - docker-php-ext-install zip pdo pdo_mysql
+      
+      # Install Composer
+      - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+      
+      # Install Node.js for frontend assets (if needed)
+      #- curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+      #- apt-get install -y nodejs
+
+  pre_build:
+    commands:
+      # Check PHP and Composer versions
+      - php --version
+      - composer --version
+      - node --version
+      - npm --version
+      
+      # Set proper permissions
+      - chmod -R 755 storage bootstrap/cache
+
+  build:
+    commands:
+      # Install PHP dependencies (no dev dependencies for production)
+      - composer install --no-dev --optimize-autoloader --no-interaction
+      
+      # Copy environment file if it exists in the source
+      - if [ -f .env.example ]; then cp .env.example .env; fi
+      
+      # Generate application key
+      - php artisan key:generate
+      
+      # Build frontend assets (if using Vite/Mix)
+      #- npm ci --only=production
+      #- npm run build
+      
+      # Clear and cache config
+      - php artisan config:cache
+      - php artisan route:cache
+      - php artisan view:cache
+      
+      # Run migrations in build phase (optional - or do in Elastic Beanstalk)
+      # - php artisan migrate --force
+
+  post_build:
+    commands:
+      # Create deployment package
+      - echo "Creating deployment package..."
+      - mkdir -p deployment
+      
+      # Copy necessary files (exclude development files)
+      - rsync -av --exclude='.git' \
+                --exclude='.github' \
+                --exclude='.env.example' \
+                --exclude='tests' \
+                --exclude='phpunit.xml' \
+                --exclude='storage/debugbar' \
+                --exclude='*.md' \
+                ./ deployment/
+      
+      # Zip the deployment package
+      - cd deployment && zip -r ../laravel-deployment.zip . && cd ..
+      
+      # List files in the zip for verification
+      - echo "Files in deployment package:"
+      - unzip -l laravel-deployment.zip | tail -20
+      
+      # Create the final artifact
+      - mv laravel-deployment.zip laravel-$(date +%Y%m%d-%H%M%S).zip
+
+artifacts:
+  files:
+    - 'laravel-*.zip'
+  discard-paths: yes
+
+cache:
+  paths:
+    - 'vendor/**/*'
+    - 'node_modules/**/*'

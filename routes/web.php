@@ -3,6 +3,5 @@
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return response()->json(['status' => 'Laravel running on ECS']);
-
+    return view('welcome');
 });

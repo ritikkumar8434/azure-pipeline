@@ -16,7 +16,7 @@ return [
     |
     */
 
-    'default' => env('DB_CONNECTION', 'sqlite'),
+    'default' => env('DB_CONNECTION', 'mysql'),
 
     /*
     |--------------------------------------------------------------------------
@@ -45,11 +45,11 @@ return [
 
         'mysql' => [
             'driver' => 'mysql',
-            'host' => env('DB_HOST', '127.0.0.1'),
-            'port' => env('DB_PORT', '3306'),
-            'database' => env('DB_DATABASE', 'laravel'),
-            'username' => env('DB_USERNAME', 'admin'),
-            'password' => env('DB_PASSWORD', 'admin1234'),
+            'host' => env('RDS_HOSTNAME', '127.0.0.1'),
+            'port' => env('RDS_PORT', '3306'),
+            'database' => env('RDS_DB_NAME', 'laravel'),
+            'username' => env('RDS_USERNAME', 'root'),
+            'password' => env('RDS_PASSWORD', ''),
             'unix_socket' => env('DB_SOCKET', ''),
             'charset' => env('DB_CHARSET', 'utf8mb4'),
             'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
@@ -57,6 +57,9 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
         ],
 
         'mariadb' => [
