@@ -7,7 +7,7 @@ phases:
     commands:
       # Update PHP and install required extensions
       - yum update -y
-      - yum install -y zip unzip git libzip-dev
+      - yum install -y zip unzip git libzip-devel
       - docker-php-ext-install zip pdo pdo_mysql
       
       # Install Composer
