@@ -5,147 +5,165 @@ phases:
     runtime-versions:
       php: 8.2
     commands:
-      # Update yum and install required packages for Amazon Linux 2
+      # Update system
       - yum update -y
-      - yum install -y zip unzip git gcc-c++ make openssl-devel
       
-      # Install PHP extensions (Amazon Linux 2 specific)
-      - yum install -y php82 php82-cli php82-common php82-devel php82-mbstring php82-pdo php82-mysqlnd php82-xml php82-gd php82-opcache php82-zip php82-bcmath php82-json php82-intl
+      # Enable Amazon Linux extras and install PHP 8.2
+      - amazon-linux-extras enable php8.2
+      - yum clean metadata
+      - yum install -y php php-cli php-common php-devel php-mbstring php-pdo php-mysqlnd php-xml php-gd php-opcache php-zip php-bcmath php-json php-intl php-curl php-fileinfo
       
-      # Set PHP 8.2 as default
-      - alternatives --set php /usr/bin/php82
-      - alternatives --set php-config /usr/bin/php-config82
-      - alternatives --set phpize /usr/bin/phpize82
+      # Install required tools
+      - yum install -y zip unzip git
       
       # Install Composer
       - curl -sS https://getcomposer.org/installer | php
       - mv composer.phar /usr/local/bin/composer
       - chmod +x /usr/local/bin/composer
       
-      # Install Node.js 18.x (Amazon Linux 2)
-      - curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-      - yum install -y nodejs
-      
-      # Install AWS CLI v2 (optional but useful)
-      - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-      - unzip awscliv2.zip
-      - ./aws/install
-      
       # Clean up
       - yum clean all
 
   pre_build:
     commands:
-      # Check versions
+      # Verify installations
+      - echo "=== Installed Versions ==="
       - php --version
       - composer --version
-      - node --version
-      - npm --version
-      - aws --version
+      - echo "PHP Modules:"
+      - php -m
       
-      # Set proper permissions
-      - chmod -R 755 storage bootstrap/cache
-      
-      # Create necessary directories
+      # Set up Laravel directories
       - mkdir -p storage/framework/{cache,sessions,views}
       - mkdir -p storage/logs
       
-      # Set ownership (simulate web server user)
-      - chmod -R 775 storage bootstrap/cache
+      # Set permissions
+      - chmod -R 755 storage bootstrap/cache
+      - chmod -R 775 storage/framework storage/logs
 
   build:
     commands:
       # Install PHP dependencies
+      - echo "=== Installing Composer Dependencies ==="
       - composer install --no-dev --optimize-autoloader --no-interaction --no-progress
       
-      # Copy environment file
+      # Set up environment
+      - echo "=== Setting Up Environment ==="
       - if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
       
-      # Generate application key if .env exists and key is not set
-      - if [ -f .env ]; then php artisan key:generate --force; fi
+      # Generate application key
+      - if [ -f .env ]; then 
+          if ! grep -q '^APP_KEY=base64:' .env 2>/dev/null; then 
+            php artisan key:generate --force; 
+          else
+            echo "App key already exists, skipping generation";
+          fi
+        else
+          echo "No .env file found";
+        fi
       
-      # Build frontend assets (check if package.json exists)
-      - if [ -f package.json ]; then npm ci --only=production; fi
-      - if [ -f package.json ] && grep -q '"scripts"' package.json; then npm run production 2>/dev/null || npm run build 2>/dev/null || true; fi
-      
-      # Cache optimization
-      - php artisan config:cache
-      - php artisan route:cache
-      - php artisan view:cache
-      
-      # Run optimizations
-      - php artisan optimize
+      # Optimize Laravel
+      - echo "=== Optimizing Laravel ==="
+      - php artisan config:clear 2>/dev/null || true
+      - php artisan config:cache 2>/dev/null || true
+      - php artisan route:clear 2>/dev/null || true
+      - php artisan route:cache 2>/dev/null || true
+      - php artisan view:clear 2>/dev/null || true
+      - php artisan view:cache 2>/dev/null || true
+      - php artisan optimize 2>/dev/null || true
 
   post_build:
     commands:
-      # Create deployment directory
-      - echo "Creating deployment package for Elastic Beanstalk..."
+      # Create deployment package
+      - echo "=== Creating Deployment Package ==="
+      - rm -rf deploy 2>/dev/null || true
       - mkdir -p deploy
       
-      # Copy application files (Amazon Linux 2 specific exclusions)
-      - rsync -av \
-          --exclude='.git' \
-          --exclude='.github' \
-          --exclude='.gitignore' \
-          --exclude='.editorconfig' \
-          --exclude='.styleci.yml' \
-          --exclude='.php_cs.dist' \
-          --exclude='docker' \
-          --exclude='docker-compose.yml' \
-          --exclude='Dockerfile' \
-          --exclude='tests' \
-          --exclude='phpunit.xml' \
-          --exclude='*.md' \
-          --exclude='*.txt' \
-          --exclude='node_modules' \
-          --exclude='vendor' \
-          --exclude='storage/debugbar' \
-          --exclude='storage/logs/*' \
-          --exclude='storage/framework/cache/*' \
-          --exclude='storage/framework/sessions/*' \
-          --exclude='storage/framework/views/*' \
-          ./ deploy/
+      # Copy essential files and directories
+      - echo "Copying application files..."
       
-      # Copy vendor directory separately (optimized for production)
-      - cp -r vendor deploy/vendor
+      # Copy Laravel core directories
+      - for dir in app bootstrap config database public resources routes vendor; do
+          if [ -d "$dir" ]; then
+            echo "Copying $dir..."
+            cp -r "$dir" deploy/
+          fi
+        done
       
-      # Copy node_modules if they exist and are needed
-      - if [ -d node_modules ] && [ -f package.json ]; then cp -r node_modules deploy/node_modules; fi
+      # Copy individual files
+      - for file in artisan composer.json composer.lock package.json server.php; do
+          if [ -f "$file" ]; then
+            echo "Copying $file..."
+            cp "$file" deploy/
+          fi
+        done
       
-      # Ensure .ebextensions directory is included
-      - if [ -d .ebextensions ]; then cp -r .ebextensions deploy/.ebextensions; fi
+      # Copy .ebextensions if exists
+      - if [ -d .ebextensions ]; then
+          echo "Copying .ebextensions..."
+          cp -r .ebextensions deploy/
+        fi
       
-      # Ensure .platform directory is included
-      - if [ -d .platform ]; then cp -r .platform deploy/.platform; fi
+      # Copy .platform if exists
+      - if [ -d .platform ]; then
+          echo "Copying .platform..."
+          cp -r .platform deploy/
+        fi
       
-      # Create .ebignore if not exists (to control what EB includes)
-      - if [ ! -f .ebignore ]; then echo "node_modules/" > deploy/.ebignore; fi
+      # Create storage structure
+      - echo "Creating storage structure..."
+      - mkdir -p deploy/storage/{app,framework,logs}
+      - mkdir -p deploy/storage/framework/{cache,sessions,views}
+      - touch deploy/storage/logs/laravel.log
       
-      # Set proper permissions in deploy directory
+      # Set permissions in deploy directory
       - chmod -R 755 deploy/storage deploy/bootstrap/cache
+      - chmod 664 deploy/storage/logs/laravel.log 2>/dev/null || true
+      
+      # Create .ebignore
+      - echo "Creating .ebignore file..."
+      - cat > deploy/.ebignore << 'EOF'
+.git/
+.gitignore
+.editorconfig
+.styleci.yml
+.php_cs.dist
+.php_cs.cache
+docker/
+docker-compose.yml
+Dockerfile
+tests/
+phpunit.xml
+*.md
+*.txt
+README*
+CHANGELOG*
+LICENSE*
+storage/debugbar/
+storage/logs/*.log
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+EOF
       
       # Create zip file
-      - cd deploy && zip -r ../laravel-eb-deploy.zip . && cd ..
+      - echo "Creating zip archive..."
+      - cd deploy && zip -rq ../laravel-deploy.zip . && cd ..
       
-      # Verify zip contents
-      - echo "=== Deployment package contents (top 20) ==="
-      - unzip -l laravel-eb-deploy.zip | head -30
-      
-      # Generate timestamp for artifact naming
+      # Generate timestamp and rename
       - DEPLOY_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-      - mv laravel-eb-deploy.zip "laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
+      - mv laravel-deploy.zip "laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
       
-      # Show final artifact info
-      - echo "=== Deployment artifact created ==="
-      - ls -lh laravel-*.zip
+      # Show artifact info
+      - echo "=== Deployment Artifact Created ==="
+      - echo "File: laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
+      - ls -lh "laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
 
 artifacts:
   files:
     - 'laravel-*.zip'
   discard-paths: yes
-  base-directory: '.'
 
 cache:
   paths:
     - 'vendor/**/*'
-    - 'node_modules/**/*'
