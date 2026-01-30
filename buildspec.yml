@@ -5,165 +5,40 @@ phases:
     runtime-versions:
       php: 8.2
     commands:
-      # Update system
-      - yum update -y
-      
-      # Enable Amazon Linux extras and install PHP 8.2
-      - amazon-linux-extras enable php8.2
-      - yum clean metadata
-      - yum install -y php php-cli php-common php-devel php-mbstring php-pdo php-mysqlnd php-xml php-gd php-opcache php-zip php-bcmath php-json php-intl php-curl php-fileinfo
-      
-      # Install required tools
-      - yum install -y zip unzip git
-      
-      # Install Composer
-      - curl -sS https://getcomposer.org/installer | php
-      - mv composer.phar /usr/local/bin/composer
-      - chmod +x /usr/local/bin/composer
-      
-      # Clean up
-      - yum clean all
+      # Use Amazon Linux 2 default PHP (which might be 7.4)
+      # Or let CodeBuild handle PHP installation via runtime-versions
+      yum update -y
+      yum install -y zip unzip git
+      # PHP should already be installed via runtime-versions
 
   pre_build:
     commands:
-      # Verify installations
-      - echo "=== Installed Versions ==="
+      - echo "PHP version:"
       - php --version
+      - echo "Installing Composer..."
+      - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+      - chmod +x /usr/local/bin/composer
       - composer --version
-      - echo "PHP Modules:"
-      - php -m
       
-      # Set up Laravel directories
+      # Prepare Laravel
       - mkdir -p storage/framework/{cache,sessions,views}
-      - mkdir -p storage/logs
-      
-      # Set permissions
       - chmod -R 755 storage bootstrap/cache
-      - chmod -R 775 storage/framework storage/logs
 
   build:
     commands:
-      # Install PHP dependencies
-      - echo "=== Installing Composer Dependencies ==="
-      - composer install --no-dev --optimize-autoloader --no-interaction --no-progress
-      
-      # Set up environment
-      - echo "=== Setting Up Environment ==="
-      - if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
-      
-      # Generate application key
-      - if [ -f .env ]; then 
-          if ! grep -q '^APP_KEY=base64:' .env 2>/dev/null; then 
-            php artisan key:generate --force; 
-          else
-            echo "App key already exists, skipping generation";
-          fi
-        else
-          echo "No .env file found";
-        fi
-      
-      # Optimize Laravel
-      - echo "=== Optimizing Laravel ==="
-      - php artisan config:clear 2>/dev/null || true
-      - php artisan config:cache 2>/dev/null || true
-      - php artisan route:clear 2>/dev/null || true
-      - php artisan route:cache 2>/dev/null || true
-      - php artisan view:clear 2>/dev/null || true
-      - php artisan view:cache 2>/dev/null || true
-      - php artisan optimize 2>/dev/null || true
+      - composer install --no-dev --optimize-autoloader --no-interaction
+      - php artisan key:generate --force
+      - php artisan config:cache
+      - php artisan route:cache
+      - php artisan view:cache
 
   post_build:
     commands:
-      # Create deployment package
-      - echo "=== Creating Deployment Package ==="
-      - rm -rf deploy 2>/dev/null || true
-      - mkdir -p deploy
-      
-      # Copy essential files and directories
-      - echo "Copying application files..."
-      
-      # Copy Laravel core directories
-      - for dir in app bootstrap config database public resources routes vendor; do
-          if [ -d "$dir" ]; then
-            echo "Copying $dir..."
-            cp -r "$dir" deploy/
-          fi
-        done
-      
-      # Copy individual files
-      - for file in artisan composer.json composer.lock package.json server.php; do
-          if [ -f "$file" ]; then
-            echo "Copying $file..."
-            cp "$file" deploy/
-          fi
-        done
-      
-      # Copy .ebextensions if exists
-      - if [ -d .ebextensions ]; then
-          echo "Copying .ebextensions..."
-          cp -r .ebextensions deploy/
-        fi
-      
-      # Copy .platform if exists
-      - if [ -d .platform ]; then
-          echo "Copying .platform..."
-          cp -r .platform deploy/
-        fi
-      
-      # Create storage structure
-      - echo "Creating storage structure..."
-      - mkdir -p deploy/storage/{app,framework,logs}
-      - mkdir -p deploy/storage/framework/{cache,sessions,views}
-      - touch deploy/storage/logs/laravel.log
-      
-      # Set permissions in deploy directory
-      - chmod -R 755 deploy/storage deploy/bootstrap/cache
-      - chmod 664 deploy/storage/logs/laravel.log 2>/dev/null || true
-      
-      # Create .ebignore
-      - echo "Creating .ebignore file..."
-      - cat > deploy/.ebignore << 'EOF'
-.git/
-.gitignore
-.editorconfig
-.styleci.yml
-.php_cs.dist
-.php_cs.cache
-docker/
-docker-compose.yml
-Dockerfile
-tests/
-phpunit.xml
-*.md
-*.txt
-README*
-CHANGELOG*
-LICENSE*
-storage/debugbar/
-storage/logs/*.log
-storage/framework/cache/*
-storage/framework/sessions/*
-storage/framework/views/*
-EOF
-      
-      # Create zip file
-      - echo "Creating zip archive..."
-      - cd deploy && zip -rq ../laravel-deploy.zip . && cd ..
-      
-      # Generate timestamp and rename
-      - DEPLOY_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-      - mv laravel-deploy.zip "laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
-      
-      # Show artifact info
-      - echo "=== Deployment Artifact Created ==="
-      - echo "File: laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
-      - ls -lh "laravel-deploy-${DEPLOY_TIMESTAMP}.zip"
+      # Simple zip creation
+      - zip -r deployment.zip . -x "*.git*" "*.github*" "node_modules/*" "tests/*" "*.md" "*.txt" "storage/debugbar/*"
+      - ls -lh deployment.zip
 
 artifacts:
   files:
-    - 'laravel-*.zip'
+    - 'deployment.zip'
   discard-paths: yes
-
-cache:
-  paths:
-    - 'vendor/**/*'
