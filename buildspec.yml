@@ -5,73 +5,80 @@ phases:
     runtime-versions:
       php: 8.2
     commands:
-      - yum update -y
-      - yum install -y zip unzip git
-      - amazon-linux-extras enable php8.2
-      - yum clean metadata
-      - yum install -y php php-cli php-mbstring php-pdo php-mysqlnd php-xml php-zip php-bcmath php-json
+      # Check what OS we're on
+      - echo "=== Checking OS ==="
+      - cat /etc/os-release
+      - echo "=== Checking available PHP packages ==="
+      
+      # Try different installation methods based on OS
+      - |
+        if [ -f /etc/os-release ]; then
+          if grep -q "Amazon Linux 2023" /etc/os-release; then
+            echo "Amazon Linux 2023 detected"
+            # For AL2023
+            dnf update -y
+            dnf install -y zip unzip git
+            dnf install -y php php-cli php-mbstring php-pdo php-mysqlnd php-xml php-zip php-bcmath php-json
+          elif grep -q "Amazon Linux 2" /etc/os-release; then
+            echo "Amazon Linux 2 detected"
+            # For AL2
+            yum update -y
+            yum install -y zip unzip git
+            # Install PHP from default repos
+            yum install -y php php-cli php-mbstring php-pdo php-mysqlnd php-xml php-zip php-bcmath php-json
+          else
+            echo "Unknown OS, trying generic installation"
+            # Try both package managers
+            yum update -y 2>/dev/null || dnf update -y 2>/dev/null || true
+            yum install -y zip unzip git php php-cli php-mbstring 2>/dev/null || dnf install -y zip unzip git php php-cli php-mbstring 2>/dev/null || true
+          fi
+        else
+          echo "No /etc/os-release found, assuming Ubuntu/Debian"
+          apt-get update -y
+          apt-get install -y zip unzip git php-cli php-mbstring php-xml php-zip
+        fi
+      
+      # Install Composer
       - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
       - chmod +x /usr/local/bin/composer
 
   pre_build:
     commands:
-      - php --version
-      - composer --version
-      - mkdir -p storage/framework/{cache,sessions,views}
-      - mkdir -p storage/logs
-      - chmod -R 755 storage bootstrap/cache
+      # Show versions
+      - echo "=== Installed Versions ==="
+      - php --version || echo "PHP not found"
+      - composer --version || echo "Composer not found"
+      
+      # Setup Laravel directories
+      - mkdir -p storage/framework/{cache,sessions,views} 2>/dev/null || true
+      - chmod -R 755 storage bootstrap/cache 2>/dev/null || true
 
   build:
     commands:
-      # Install dependencies first
+      # Install dependencies
       - composer install --no-dev --optimize-autoloader --no-interaction --no-progress
       
-      # Create minimal .env file without using heredoc (to avoid YAML issues)
-      - |
-        if [ ! -f .env ]; then
-          echo "APP_NAME=Laravel" > .env
-          echo "APP_ENV=production" >> .env
-          echo "APP_KEY=" >> .env
-          echo "APP_DEBUG=false" >> .env
-          echo "APP_URL=http://localhost" >> .env
-          echo "LOG_CHANNEL=stack" >> .env
-          echo "DB_CONNECTION=mysql" >> .env
-          echo "DB_HOST=127.0.0.1" >> .env
-          echo "DB_PORT=3306" >> .env
-          echo "DB_DATABASE=laravel" >> .env
-          echo "DB_USERNAME=root" >> .env
-          echo "DB_PASSWORD=" >> .env
-        fi
-      
-      # Try to generate key only if .env exists
-      - |
-        if [ -f .env ]; then
-          if ! grep -q '^APP_KEY=base64:' .env; then
-            php artisan key:generate --force || echo "Key generation failed, continuing..."
-          fi
-        fi
-      
-      # Cache configurations
-      - php artisan config:cache 2>/dev/null || true
-      - php artisan route:cache 2>/dev/null || true
-      - php artisan view:cache 2>/dev/null || true
-      - php artisan optimize 2>/dev/null || true
+      # Cache config (skip if fails)
+      - php artisan config:cache 2>/dev/null || echo "Config cache skipped"
+      - php artisan route:cache 2>/dev/null || echo "Route cache skipped"
+      - php artisan view:cache 2>/dev/null || echo "View cache skipped"
 
   post_build:
     commands:
-      # Create deployment zip (exclude .env file)
+      # Create deployment zip
       - zip -r deployment.zip . \
           -x ".git/*" \
           -x ".github/*" \
-          -x ".env" \
+          -x ".env*" \
           -x "node_modules/*" \
           -x "tests/*" \
           -x "*.md" \
-          -x "*.txt" \
-          -x "storage/debugbar/*"
+          -x "storage/debugbar/*" \
+          -x "vendor/*/tests/*" \
+          -x "vendor/*/test/*"
       
       # Show result
-      - echo "Deployment package created:"
+      - echo "=== Deployment Package Created ==="
       - ls -lh deployment.zip
 
 artifacts:
