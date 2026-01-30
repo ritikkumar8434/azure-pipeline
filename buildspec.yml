@@ -5,40 +5,157 @@ phases:
     runtime-versions:
       php: 8.2
     commands:
-      # Use Amazon Linux 2 default PHP (which might be 7.4)
-      # Or let CodeBuild handle PHP installation via runtime-versions
-      yum update -y
-      yum install -y zip unzip git
-      # PHP should already be installed via runtime-versions
+      # Install system packages
+      - yum update -y
+      - yum install -y zip unzip git
+      
+      # Install PHP from Amazon Linux Extras
+      - amazon-linux-extras enable php8.2
+      - yum clean metadata
+      - yum install -y php php-cli php-common php-mbstring php-pdo php-mysqlnd php-xml php-gd php-zip php-bcmath php-json
+      
+      # Install Composer
+      - curl -sS https://getcomposer.org/installer | php
+      - mv composer.phar /usr/local/bin/composer
+      - chmod +x /usr/local/bin/composer
 
   pre_build:
     commands:
-      - echo "PHP version:"
+      # Check versions
       - php --version
-      - echo "Installing Composer..."
-      - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-      - chmod +x /usr/local/bin/composer
       - composer --version
       
-      # Prepare Laravel
+      # Create Laravel directories
       - mkdir -p storage/framework/{cache,sessions,views}
+      - mkdir -p storage/logs
+      
+      # Set permissions
       - chmod -R 755 storage bootstrap/cache
 
   build:
     commands:
-      - composer install --no-dev --optimize-autoloader --no-interaction
-      - php artisan key:generate --force
-      - php artisan config:cache
-      - php artisan route:cache
-      - php artisan view:cache
+      # First, create .env file if it doesn't exist
+      - echo "=== Creating .env file ==="
+      - if [ ! -f .env ] && [ -f .env.example ]; then 
+          echo "Copying .env.example to .env";
+          cp .env.example .env;
+        elif [ ! -f .env ]; then
+          echo "Creating basic .env file";
+          cat > .env << 'EOF'
+APP_NAME=Laravel
+APP_ENV=production
+APP_KEY=
+APP_DEBUG=false
+APP_URL=http://localhost
+
+LOG_CHANNEL=stack
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=debug
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=laravel
+DB_USERNAME=root
+DB_PASSWORD=
+
+BROADCAST_DRIVER=log
+CACHE_DRIVER=file
+FILESYSTEM_DISK=local
+QUEUE_CONNECTION=sync
+SESSION_DRIVER=file
+SESSION_LIFETIME=120
+
+MEMCACHED_HOST=127.0.0.1
+
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+
+MAIL_MAILER=smtp
+MAIL_HOST=mailhog
+MAIL_PORT=1025
+MAIL_USERNAME=null
+MAIL_PASSWORD=null
+MAIL_ENCRYPTION=null
+MAIL_FROM_ADDRESS="hello@example.com"
+MAIL_FROM_NAME="${APP_NAME}"
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=
+AWS_USE_PATH_STYLE_ENDPOINT=false
+
+PUSHER_APP_ID=
+PUSHER_APP_KEY=
+PUSHER_APP_SECRET=
+PUSHER_HOST=
+PUSHER_PORT=443
+PUSHER_SCHEME=https
+PUSHER_APP_CLUSTER=mt1
+
+VITE_PUSHER_APP_KEY="${PUSHER_APP_KEY}"
+VITE_PUSHER_HOST="${PUSHER_HOST}"
+VITE_PUSHER_PORT="${PUSHER_PORT}"
+VITE_PUSHER_SCHEME="${PUSHER_SCHEME}"
+VITE_PUSHER_APP_CLUSTER="${PUSHER_APP_CLUSTER}"
+EOF
+        else
+          echo ".env file already exists";
+        fi
+      
+      # Now install dependencies
+      - echo "=== Installing Composer Dependencies ==="
+      - composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+      
+      # Generate application key only if .env exists and doesn't have a key
+      - echo "=== Generating Application Key ==="
+      - if [ -f .env ]; then
+          if grep -q '^APP_KEY=$' .env || ! grep -q '^APP_KEY=' .env; then
+            echo "Generating new application key...";
+            php artisan key:generate --force;
+          else
+            echo "Application key already exists in .env";
+          fi
+        else
+          echo "Warning: .env file not found, skipping key generation";
+        fi
+      
+      # Cache configurations
+      - echo "=== Caching Configurations ==="
+      - php artisan config:cache 2>/dev/null || true
+      - php artisan route:cache 2>/dev/null || true
+      - php artisan view:cache 2>/dev/null || true
+      - php artisan optimize 2>/dev/null || true
 
   post_build:
     commands:
-      # Simple zip creation
-      - zip -r deployment.zip . -x "*.git*" "*.github*" "node_modules/*" "tests/*" "*.md" "*.txt" "storage/debugbar/*"
+      # Create deployment package
+      - echo "=== Creating Deployment Package ==="
+      
+      # Create zip directly (simpler approach)
+      - zip -r deployment.zip . \
+          -x "*.git*" \
+          -x "*.github*" \
+          -x "node_modules/*" \
+          -x "tests/*" \
+          -x "*.md" \
+          -x "*.txt" \
+          -x "storage/debugbar/*" \
+          -x ".env"  # Exclude local .env file
+      
+      # Show zip contents
+      - echo "=== Deployment Package Created ==="
       - ls -lh deployment.zip
+      - echo "Top 20 files in zip:"
+      - unzip -l deployment.zip | head -25
 
 artifacts:
   files:
     - 'deployment.zip'
   discard-paths: yes
+
+cache:
+  paths:
+    - 'vendor/**/*'
